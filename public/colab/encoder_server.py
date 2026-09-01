@@ -22,8 +22,9 @@ from urllib.parse import urlparse
 import urllib.request
 
 W, H, FPS, XF, GROUP = 1920, 1080, 30, 0.7, 40
-WORK = "/content/sw_work"
-OUT = "/content/sw_out"
+BASE = os.environ.get("SW_BASE") or ("/content" if os.path.isdir("/content") else os.getcwd())
+WORK = os.path.join(BASE, "sw_work")
+OUT = os.path.join(BASE, "sw_out")
 LANES = int(os.environ.get("SW_LANES", "0"))
 TOKEN = os.environ.get("SW_TOKEN", "")
 
