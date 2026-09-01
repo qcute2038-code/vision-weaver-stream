@@ -492,7 +492,6 @@ function byteEntropy(buf: Uint8Array): number {
   const step = Math.max(1, Math.floor(buf.byteLength / 200_000));
   let n = 0;
   for (let i = 0; i < buf.byteLength; i += step) {
-    counts[buf[i]!]!;
     counts[buf[i]!] = counts[buf[i]!]! + 1;
     n++;
   }
