@@ -466,7 +466,9 @@ export async function buildVideo(
       const fadeStart = Math.max(0, dur - XF);
 
       for (let f = 0; f < frames; f++) {
+        if (frameIndex >= targetFrames) break;
         const t = f / FPS;
+
         // the shot's own move runs over its duration plus the outgoing fade
         const p = t / (dur + (i < shots.length - 1 ? XF : 0));
 
