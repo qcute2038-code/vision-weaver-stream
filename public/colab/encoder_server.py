@@ -378,27 +378,40 @@ def render(jid, panels, target_seconds=0.0):
          *trim, "-c", "copy", "-movflags", "+faststart", final])
 
     # ---- final audit: measure the real mp4 and correct any residual drift ---
-    got = probe_duration(final)
-    drift = target - got
-    if abs(drift) > 1.0 / FPS:
-        fixed = os.path.join(OUT, f"{jid}.fix.mp4")
+    # Stream-copy trims land on keyframes, so retry and fall back to an exact
+    # re-encode until the runtime equals the script's last timestamp.
+    tol = 1.0 / FPS
+    for attempt in range(4):
+        got = probe_duration(final)
+        drift = target - got
+        if abs(drift) <= tol:
+            break
+        set_job(jid, pct=98, note="Matching video length to the script…")
+        fixed = os.path.join(OUT, f"{jid}.fix{attempt}.mp4")
         if drift > 0 and os.path.exists(pad_src):
-            tailc = os.path.join(d, "tail.mp4")
+            tailc = os.path.join(d, f"tail{attempt}.mp4")
             run(["ffmpeg", "-y", "-loop", "1", "-i", pad_src, "-t", f"{drift:.3f}",
                  "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,"
                         f"crop={W}:{H},setsar=1,fps={FPS},"
                         f"eq=contrast=1.22:brightness=-0.10:saturation=0.84,format=yuv420p",
                  "-r", str(FPS), *VCODEC, "-pix_fmt", "yuv420p", tailc])
-            listf2 = os.path.join(d, "list2.txt")
+            listf2 = os.path.join(d, f"list{attempt}.txt")
             with open(listf2, "w") as f:
                 f.write(f"file '{final}'\nfile '{tailc}'\n")
             run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf2,
                  "-c", "copy", "-movflags", "+faststart", fixed])
-        else:
+        elif attempt == 0:
             run(["ffmpeg", "-y", "-i", final, "-t", f"{target:.3f}",
                  "-c", "copy", "-movflags", "+faststart", fixed])
+        else:
+            # frame-exact: re-encode and cut on the precise frame count
+            run(["ffmpeg", "-y", "-i", final,
+                 "-frames:v", str(max(1, int(round(target * FPS)))),
+                 "-r", str(FPS), *VCODEC, "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", fixed])
         os.replace(fixed, final)
-        got = probe_duration(final)
+    got = probe_duration(final)
+
 
     shutil.rmtree(d, ignore_errors=True)
     size = os.path.getsize(final)
