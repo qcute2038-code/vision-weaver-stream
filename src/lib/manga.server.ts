@@ -154,9 +154,10 @@ export function parseJsonArray(raw: string): unknown[] {
 /**
  * Builds a compact, reusable character bible from the script.
  *
- * A multi-hour script is hundreds of KB, which blows past the free model's
- * context window and comes back as a hard 400. So the script is sampled down,
- * and if the call still fails the sample is halved and retried on other keys.
+ * Only the OPENING portion of the script is sent: characters are introduced in
+ * the first scenes, so the head alone is enough to fix their look, and it keeps
+ * the request far inside the free model's context window (a multi-hour script
+ * would otherwise come back as a hard 400). Budgets shrink on each retry.
  * It never throws: an empty bible only costs some consistency, while a throw
  * would kill the whole storyboard for a long script.
  */
@@ -168,6 +169,7 @@ export async function buildCharacterBible(script: string): Promise<string> {
     "eye colour, skin tone, face shape, one distinguishing feature (scar, mole, glasses, bandage), build/height, and " +
     "signature clothing WITH exact colours. Be concrete — these traits must let an artist redraw the same person " +
     "hundreds of times identically. 14-25 words per character. Max 6 characters. " +
+    "You are given only the OPENING of the script; that is enough — do not ask for more. " +
     "CRITICAL: determine each character's gender from the script (names, pronouns, relationships like brother/sister) " +
     "and make the gender the FIRST and most emphasized trait — write 'male' or 'female' explicitly plus a matching " +
     "noun (man/woman/boy/girl). Never guess wrong or leave gender ambiguous. " +
@@ -175,26 +177,29 @@ export async function buildCharacterBible(script: string): Promise<string> {
     "thin wiry build, faded grey school shirt with frayed collar, small scar above left eyebrow. " +
     "No headings, no numbering, no extra commentary. Do not deliberate — answer immediately.";
 
+  // head-only sample, cut on a line boundary so the model never sees half a word
   const sampleAt = (budget: number) => {
     if (script.length <= budget) return script;
-    const half = Math.floor(budget / 2);
-    return `${script.slice(0, half)}\n...\n${script.slice(-half)}`;
+    const head = script.slice(0, budget);
+    const cut = head.lastIndexOf("\n");
+    return cut > budget * 0.5 ? head.slice(0, cut) : head;
   };
 
   let lastErr = "";
   // shrink on every failure: context overflow is the usual cause for long scripts
-  for (const [i, budget] of [16000, 8000, 4000, 2000].entries()) {
+  for (const [i, budget] of [6000, 4000, 2500, 1200].entries()) {
     try {
       const out = await zaiChat(
         [
           { role: "system", content: system },
-          { role: "user", content: sampleAt(budget) },
+          { role: "user", content: `SCRIPT OPENING:\n${sampleAt(budget)}` },
         ],
-        { maxTokens: 2000, timeoutMs: 90_000, attempts: 2, slot: i },
+        { maxTokens: 1200, timeoutMs: 90_000, attempts: 2, slot: i },
       );
       const bible = stripFences(out).slice(0, 2400);
       if (bible.length > 20) return bible;
       lastErr = "empty bible";
+
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);
     }
