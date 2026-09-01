@@ -9,6 +9,7 @@ import {
 } from "@/lib/manga.functions";
 import { buildTimeline, fmt, scriptDuration, type Segment } from "@/lib/script";
 import { buildVideo, webCodecsSupported } from "@/lib/video";
+import { isBlankImageUrl } from "@/lib/blank";
 import { colabHealth, normalizeColabUrl, renderOnColab } from "@/lib/colab";
 
 
