@@ -477,12 +477,33 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
 /**
  * Blank-panel rejection.
  *
- * A blank/solid Flux frame compresses to a couple of kilobytes, while a real
- * detailed 1024x576 panel never does. Anything suspiciously small (or not an
- * image at all) is treated as blank and re-rendered on another key/seed, so no
- * empty panel can ever reach the encoder.
+ * A blank/solid or nearly-empty Flux frame compresses to a few kilobytes and
+ * its compressed bytes carry very little entropy, while a real detailed
+ * 1024x576 panel never does. Anything suspiciously small, low-entropy, or not
+ * an image at all is treated as blank and re-rendered on another key/seed, so
+ * no empty panel can reach the encoder.
  */
-const MIN_IMAGE_BYTES = 18_000;
+const MIN_IMAGE_BYTES = 40_000;
+/** Shannon entropy (bits/byte) of compressed image data; real art is > 7.5. */
+const MIN_ENTROPY = 7.0;
+
+function byteEntropy(buf: Uint8Array): number {
+  const counts = new Uint32Array(256);
+  const step = Math.max(1, Math.floor(buf.byteLength / 200_000));
+  let n = 0;
+  for (let i = 0; i < buf.byteLength; i += step) {
+    counts[buf[i]!] = counts[buf[i]!]! + 1;
+    n++;
+  }
+  let h = 0;
+  for (let i = 0; i < 256; i++) {
+    const c = counts[i]!;
+    if (!c) continue;
+    const p = c / n;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
 
 async function isRealImage(url: string): Promise<boolean> {
   try {
@@ -493,12 +514,15 @@ async function isRealImage(url: string): Promise<boolean> {
     const isPng = buf[0] === 0x89 && buf[1] === 0x50;
     const isJpg = buf[0] === 0xff && buf[1] === 0xd8;
     const isWebp = buf[8] === 0x57 && buf[9] === 0x45;
-    return isPng || isJpg || isWebp;
+    if (!isPng && !isJpg && !isWebp) return false;
+    // skip the header before measuring entropy of the compressed payload
+    return byteEntropy(buf.subarray(Math.min(2048, buf.byteLength >> 2))) >= MIN_ENTROPY;
   } catch {
     // Network hiccup while probing: don't throw away a probably-good panel.
     return true;
   }
 }
+
 
 /** Calls Flux.1 Schnell (free tier) with automatic retries. Always 16:9. */
 export async function generateImage(

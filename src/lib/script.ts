@@ -55,11 +55,21 @@ export function parseScript(raw: string): Segment[] {
   const push = (start: number, end: number, text: string) => {
     if (end <= start) return;
     if (!text) {
-      // No dialogue in this span: give the time to the previous panel instead
-      // of deleting it, otherwise the video ends up shorter than the script.
+      // No dialogue in this span. One timestamp = one panel, so it still gets
+      // its OWN image: a continuation beat of the previous line. Only a span
+      // too short to render is folded into the previous panel (its time is
+      // never dropped, so the video can't come out shorter than the script).
       const last = rawSegs[rawSegs.length - 1];
-      if (last) {
+      if (end - start < MIN_PANEL && last) {
         last.end = end;
+        return;
+      }
+      if (last) {
+        rawSegs.push({
+          start,
+          end,
+          text: `Continuation of the same moment, camera holds on the scene: ${last.text}`,
+        });
         return;
       }
       // leading gap before the first spoken line — keep it as an establishing beat
@@ -68,6 +78,7 @@ export function parseScript(raw: string): Segment[] {
     }
     rawSegs.push({ start, end, text });
   };
+
 
   for (let i = 0; i < marks.length - 1; i++) {
     const a = marks[i]!;

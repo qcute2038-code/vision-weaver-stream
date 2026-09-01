@@ -13,6 +13,7 @@
  */
 
 import { Muxer, ArrayBufferTarget, StreamTarget } from "mp4-muxer";
+import { analyseBitmap } from "./blank";
 
 export type Shot = { url: string; start: number; end: number; prompt?: string | undefined };
 
@@ -411,8 +412,16 @@ export async function buildVideo(
   }
 
   /** Loads a panel and bakes its colour grade in — once, not per frame. */
-  const loadGraded = async (i: number): Promise<ImageBitmap> =>
-    gradeBitmap(await loadBitmap(shots[i]!.url), gradeFor(shots[i]!, i));
+  const loadGraded = async (i: number): Promise<ImageBitmap> => {
+    const raw = await loadBitmap(shots[i]!.url);
+    // reject a visually empty panel so loadGradedSafe substitutes a neighbour
+    if (analyseBitmap(raw).blank) {
+      raw.close?.();
+      throw new Error("blank panel");
+    }
+    return gradeBitmap(raw, gradeFor(shots[i]!, i));
+  };
+
 
   /**
    * Never let one unusable panel abort or shorten the render: fall back to a
