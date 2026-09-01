@@ -332,15 +332,46 @@ function Index() {
                 })),
               },
             });
-            for (const r of results) {
-              if (r.url) {
-                record(r.index, { url: r.url, status: "done", error: undefined });
-              } else {
+            await Promise.all(
+              results.map(async (r) => {
+                if (r.url) {
+                  // Pixel-level blank check in the browser: a flat/empty frame
+                  // is re-rolled on a fresh seed and key so every timestamp
+                  // ends up with a real image.
+                  let url: string | null = r.url;
+                  const prompt =
+                    group.find((g) => g.seg.index === r.index)?.prompt ?? "";
+                  for (let attempt = 1; attempt <= 2; attempt++) {
+                    if (!url || !(await isBlankImageUrl(url))) break;
+                    url = null;
+                    if (!prompt) break;
+                    try {
+                      const res = await draw({
+                        data: {
+                          prompt,
+                          seed: 1000 + r.index + attempt * 7919,
+                          bible: b,
+                          slot: keyTick++,
+                        },
+                      });
+                      url = res.url;
+                    } catch {
+                      url = null;
+                    }
+                  }
+                  if (url && !(await isBlankImageUrl(url))) {
+                    record(r.index, { url, status: "done", error: undefined });
+                  } else {
+                    record(r.index, { status: "error", error: "blank image" });
+                  }
+                  return;
+                }
                 const msg = r.error ?? "render failed";
                 if (/429|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 5000;
                 record(r.index, { status: "error", error: msg });
-              }
-            }
+              }),
+            );
+
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (/429|rate|quota/i.test(msg)) cooldownUntil = Date.now() + 5000;
