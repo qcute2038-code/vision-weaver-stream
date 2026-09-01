@@ -93,7 +93,14 @@ export async function zaiChat(
       });
       if (!res.ok) {
         lastErr = `${res.status} ${await res.text().catch(() => "")}`.slice(0, 300);
+        // 401/403 = bad key, 400 = the request itself (usually too long) — both
+        // are pointless to retry on the same payload.
         if (res.status === 400 || res.status === 401 || res.status === 403) break;
+        // free tier is 60 req/min per key: wait out the window on another key
+        if (res.status === 429 && attempt < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 2_000 * (attempt + 1)));
+          continue;
+        }
       } else {
         const json = (await res.json()) as {
           choices?: { message?: { content?: string; reasoning?: string } }[];
@@ -110,6 +117,7 @@ export async function zaiChat(
     // back off progressively instead of failing the whole batch.
     if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
   }
+
   throw new Error(`Text model request failed: ${lastErr}`);
 }
 
@@ -143,35 +151,58 @@ export function parseJsonArray(raw: string): unknown[] {
   return JSON.parse(text.slice(start, end + 1)) as unknown[];
 }
 
-/** Builds a compact, reusable character bible from the whole script. */
+/**
+ * Builds a compact, reusable character bible from the script.
+ *
+ * A multi-hour script is hundreds of KB, which blows past the free model's
+ * context window and comes back as a hard 400. So the script is sampled down,
+ * and if the call still fails the sample is halved and retried on other keys.
+ * It never throws: an empty bible only costs some consistency, while a throw
+ * would kill the whole storyboard for a long script.
+ */
 export async function buildCharacterBible(script: string): Promise<string> {
-  const sample =
-    script.length > 24000 ? script.slice(0, 12000) + "\n...\n" + script.slice(-12000) : script;
+  const system =
+    "You are a manga art director for a DARK, mysterious, noir-toned anime film. Read the script (it may be " +
+    "Hinglish/Hindi) and list the recurring characters. For each, give ONE compact English line of FIXED, highly " +
+    "specific visual traits usable verbatim inside an image prompt: age, gender, exact hair colour + length + style, " +
+    "eye colour, skin tone, face shape, one distinguishing feature (scar, mole, glasses, bandage), build/height, and " +
+    "signature clothing WITH exact colours. Be concrete — these traits must let an artist redraw the same person " +
+    "hundreds of times identically. 14-25 words per character. Max 6 characters. " +
+    "CRITICAL: determine each character's gender from the script (names, pronouns, relationships like brother/sister) " +
+    "and make the gender the FIRST and most emphasized trait — write 'male' or 'female' explicitly plus a matching " +
+    "noun (man/woman/boy/girl). Never guess wrong or leave gender ambiguous. " +
+    "Output plain lines like: Henan: male, 17-year-old Indian boy, messy jet-black hair, dark brown eyes, tan skin, " +
+    "thin wiry build, faded grey school shirt with frayed collar, small scar above left eyebrow. " +
+    "No headings, no numbering, no extra commentary. Do not deliberate — answer immediately.";
 
-  const out = await zaiChat(
-    [
-      {
-        role: "system",
-        content:
-          "You are a manga art director for a DARK, mysterious, noir-toned anime film. Read the script (it may be " +
-          "Hinglish/Hindi) and list the recurring characters. For each, give ONE compact English line of FIXED, highly " +
-          "specific visual traits usable verbatim inside an image prompt: age, gender, exact hair colour + length + style, " +
-          "eye colour, skin tone, face shape, one distinguishing feature (scar, mole, glasses, bandage), build/height, and " +
-          "signature clothing WITH exact colours. Be concrete — these traits must let an artist redraw the same person " +
-          "hundreds of times identically. 14-25 words per character. Max 6 characters. " +
-          "CRITICAL: determine each character's gender from the script (names, pronouns, relationships like brother/sister) " +
-          "and make the gender the FIRST and most emphasized trait — write 'male' or 'female' explicitly plus a matching " +
-          "noun (man/woman/boy/girl). Never guess wrong or leave gender ambiguous. " +
-          "Output plain lines like: Henan: male, 17-year-old Indian boy, messy jet-black hair, dark brown eyes, tan skin, " +
-          "thin wiry build, faded grey school shirt with frayed collar, small scar above left eyebrow. " +
-          "No headings, no numbering, no extra commentary. Do not deliberate — answer immediately.",
-      },
-      { role: "user", content: sample },
-    ],
-    { maxTokens: 2500, timeoutMs: 120_000 },
-  );
-  return stripFences(out).slice(0, 2400);
+  const sampleAt = (budget: number) => {
+    if (script.length <= budget) return script;
+    const half = Math.floor(budget / 2);
+    return `${script.slice(0, half)}\n...\n${script.slice(-half)}`;
+  };
+
+  let lastErr = "";
+  // shrink on every failure: context overflow is the usual cause for long scripts
+  for (const [i, budget] of [16000, 8000, 4000, 2000].entries()) {
+    try {
+      const out = await zaiChat(
+        [
+          { role: "system", content: system },
+          { role: "user", content: sampleAt(budget) },
+        ],
+        { maxTokens: 2000, timeoutMs: 90_000, attempts: 2, slot: i },
+      );
+      const bible = stripFences(out).slice(0, 2400);
+      if (bible.length > 20) return bible;
+      lastErr = "empty bible";
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  console.error("buildCharacterBible failed, continuing without a bible:", lastErr);
+  return "";
 }
+
 
 const PROMPT_SYSTEM =
   "You write image prompts for a DARK, mysterious, cinematic manga storyboard. Input: a character bible, optional story " +
