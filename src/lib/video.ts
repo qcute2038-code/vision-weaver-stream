@@ -13,6 +13,7 @@
  */
 
 import { Muxer, ArrayBufferTarget, StreamTarget } from "mp4-muxer";
+import { analyseBitmap } from "./blank";
 
 export type Shot = { url: string; start: number; end: number; prompt?: string | undefined };
 
