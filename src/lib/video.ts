@@ -440,6 +440,9 @@ export async function buildVideo(
 
     for (let i = 0; i < shots.length; i++) {
       if (encoderError) throw encoderError;
+      // hard cap: never write past the script's exact runtime
+      if (frameIndex >= targetFrames) break;
+
 
       const dur = durations[i]!;
       const frames = Math.max(1, Math.round(dur * FPS));
