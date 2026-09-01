@@ -93,7 +93,14 @@ export async function zaiChat(
       });
       if (!res.ok) {
         lastErr = `${res.status} ${await res.text().catch(() => "")}`.slice(0, 300);
+        // 401/403 = bad key, 400 = the request itself (usually too long) — both
+        // are pointless to retry on the same payload.
         if (res.status === 400 || res.status === 401 || res.status === 403) break;
+        // free tier is 60 req/min per key: wait out the window on another key
+        if (res.status === 429 && attempt < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 2_000 * (attempt + 1)));
+          continue;
+        }
       } else {
         const json = (await res.json()) as {
           choices?: { message?: { content?: string; reasoning?: string } }[];
@@ -110,6 +117,7 @@ export async function zaiChat(
     // back off progressively instead of failing the whole batch.
     if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
   }
+
   throw new Error(`Text model request failed: ${lastErr}`);
 }
 
