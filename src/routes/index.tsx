@@ -7,7 +7,7 @@ import {
   renderImage,
   renderBatch,
 } from "@/lib/manga.functions";
-import { buildTimeline, fmt, scriptDuration, type Segment } from "@/lib/script";
+import { buildTimeline, fmt, scriptEndTime, type Segment } from "@/lib/script";
 import { buildVideo, webCodecsSupported } from "@/lib/video";
 import { isBlankImageUrl } from "@/lib/blank";
 import { colabHealth, normalizeColabUrl, renderOnColab } from "@/lib/colab";
@@ -164,7 +164,7 @@ function Index() {
 
   // Runtime is the script's own span (first to last timestamp) — the exact
   // length the exported video is forced to match.
-  const runtime = useMemo(() => scriptDuration(shots), [shots]);
+  const runtime = useMemo(() => scriptEndTime(script), [script]);
 
 
   // offer to resume whatever this exact script produced last time
@@ -474,7 +474,7 @@ function Index() {
 
     // Every script timestamp becomes a panel. Panels whose image failed reuse a
     // neighbour's image instead of vanishing, so the runtime always matches.
-    const timeline = buildTimeline(shotsRef.current);
+    const timeline = buildTimeline(shotsRef.current, scriptEndTime(script));
 
     if (timeline.panels.length === 0) {
       setError("No finished panels to build a video from.");
@@ -511,7 +511,7 @@ function Index() {
     setVideoUrl(null);
     setDownloadUrl(null);
 
-    const timeline = buildTimeline(shotsRef.current);
+    const timeline = buildTimeline(shotsRef.current, scriptEndTime(script));
     const ready = timeline.panels;
 
     if (ready.length === 0) {

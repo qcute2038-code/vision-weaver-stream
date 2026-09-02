@@ -5,7 +5,9 @@ export type Segment = {
   text: string;
 };
 
-const TS = /\((\d{1,2}):(\d{2})(?::(\d{2}))?\)/g;
+// The first field is intentionally unbounded: long scripts commonly continue
+// MM:SS past 99 minutes (for example 120:19), as well as using HH:MM:SS.
+const TS = /\((\d+):(\d{2})(?::(\d{2}))?\)/g;
 
 /** Timeline frame rate. Every duration is quantised to this grid so the encoder
  * cannot drift: round(dur * FPS) is then always exact. */
@@ -22,6 +24,21 @@ function toSeconds(m: RegExpExecArray): number {
   const b = Number(m[2]);
   const c = m[3] !== undefined ? Number(m[3]) : null;
   return c === null ? a * 60 + b : a * 3600 + b * 60 + c;
+}
+
+/**
+ * Absolute final timestamp in the raw script. This is the authoritative video
+ * runtime and deliberately does not depend on how many panels were generated.
+ */
+export function scriptEndTime(raw: string): number {
+  TS.lastIndex = 0;
+  let end = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TS.exec(raw)) !== null) {
+    const seconds = toSeconds(m);
+    if (Number.isFinite(seconds)) end = Math.max(end, seconds);
+  }
+  return quantise(end);
 }
 
 /**
@@ -168,19 +185,23 @@ export type Timeline = {
  *  3. Every boundary is frame-aligned and every panel is at least MIN_PANEL
  *     long, so the encoders' round(dur * FPS) can't accumulate drift.
  */
-export function buildTimeline(shots: PanelSource[]): Timeline {
+export function buildTimeline(shots: PanelSource[], targetSeconds?: number): Timeline {
   const all = [...shots]
     .map((s) => ({ ...s, start: quantise(s.start), end: quantise(s.end) }))
     .sort((a, b) => a.start - b.start);
   if (all.length === 0) return { panels: [], total: 0, substituted: 0 };
   if (!all.some((s) => s.url)) return { panels: [], total: 0, substituted: 0 };
 
-  const t0 = all[0]!.start;
-  const tEnd = quantise(all.reduce((m, s) => Math.max(m, s.end), all[0]!.end));
+  // Video time starts at zero and ends at the raw script's last timestamp.
+  // A target can therefore extend beyond incomplete/restored panel data without
+  // losing the missing tail; the nearest available image simply holds over it.
+  const t0 = 0;
+  const panelEnd = all.reduce((m, s) => Math.max(m, s.end), all[0]!.end);
+  const tEnd = quantise(Math.max(panelEnd, targetSeconds ?? 0));
 
   // 1. contiguous boundaries from the timestamps themselves
   const bounds: number[] = [];
-  for (let i = 0; i < all.length; i++) bounds.push(all[i]!.start);
+  for (let i = 0; i < all.length; i++) bounds.push(i === 0 ? t0 : all[i]!.start);
   bounds.push(tEnd);
 
   // 2. resolve every panel's image: its own, else the nearest neighbour's
